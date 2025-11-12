@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Pillow</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header class="topbar">
+        <h1>Pillow</h1>
+        <p class="subtitle">Editor inteligente de imágenes</p>
+    </header>
+
+    <main class="main-layout">
+        <!-- Panel de controles (oculto hasta subir imagen) -->
+        <aside class="sidebar hidden" id="controlPanel">
+            <h2>Controles manuales</h2>
+            <div class="controls">
+                <label>Brillo <span id="brightnessVal"></span></label>
+                <input type="range" id="brightnessSlider" min="-100" max="100">
+                <label>Contraste <span id="contrastVal"></span></label>
+                <input type="range" id="contrastSlider" min="0.5" max="3" step="0.1">
+                <label>Nitidez <span id="sharpnessVal"></span></label>
+                <input type="range" id="sharpnessSlider" min="0" max="3" step="0.1">
+                <label>Saturación <span id="saturationVal"></span></label>
+                <input type="range" id="saturationSlider" min="0" max="3" step="0.1">
+                <label>Gamma <span id="gammaVal"></span></label>
+                <input type="range" id="gammaSlider" min="0.1" max="3" step="0.1">
+                <label>Temperatura <span id="color_tempVal"></span></label>
+                <input type="range" id="color_tempSlider" min="-50" max="50" step="5">
+                <label>Contornos <span id="edge_markVal"></span></label>
+                <input type="range" id="edge_markSlider" min="0" max="2" step="0.1">
+            </div>
+        </aside>
+
+        <!-- Zona principal -->
+        <section class="workspace">
+            <div class="upload-zone" id="dropZone">
+                <p>✨ Arrastra una imagen aquí o haz clic para subir</p>
+                <input type="file" id="fileInput" accept="image/*">
+            </div>
+
+            <div id="editor" class="hidden">
+                <div class="image-comparison">
+                    <figure>
+                        <figcaption>Original</figcaption>
+                        <img id="originalImage" src="" alt="Original" onclick="openModal(this.src)">
+                    </figure>
+                    <figure>
+                        <figcaption>Procesada</figcaption>
+                        <img id="processedImage" src="" alt="Procesada" onclick="openModal(this.src)">
+                    </figure>
+                </div>
+
+                <h3>Perfiles sugeridos</h3>
+                <div id="profilePreviews" class="profile-previews"></div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Modal -->
+    <div id="imageModal" class="modal" onclick="closeModal()">
+        <span class="close">&times;</span>
+        <img class="modal-content" id="modalImg">
+    </div>
+
+    <footer>
+        <p>Hecho con ❤️ para mejorar tus imágenes</p>
+    </footer>
+
+    <script>
+        let currentFile = null;
+        const sliders = ['brightness','contrast','sharpness','saturation','gamma','color_temp','edge_mark'];
+
+        function updateSliders(suggested){
+            sliders.forEach(name=>{
+                document.getElementById(`${name}Slider`).value=suggested[name];
+                document.getElementById(`${name}Val`).textContent=suggested[name];
+            });
+        }
+
+        function adjustImage(){
+            const data={filename:currentFile};
+            sliders.forEach(n=>{
+                data[n]=parseFloat(document.getElementById(`${n}Slider`).value);
+                document.getElementById(`${n}Val`).textContent=data[n];
+            });
+            fetch('/adjust',{
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify(data)
+            })
+            .then(res=>res.blob())
+            .then(b=>{
+                document.getElementById('processedImage').src=URL.createObjectURL(b);
+            });
+        }
+
+        function handleUpload(file){
+            const formData=new FormData();
+            formData.append('image',file);
+            fetch('/upload',{method:'POST',body:formData})
+            .then(r=>r.json())
+            .then(d=>{
+                currentFile=d.filename;
+                document.getElementById('originalImage').src=d.original;
+                document.getElementById('processedImage').src=d.processed;
+                updateSliders(d.suggested);
+
+                // Mostrar editor y controles
+                document.getElementById('editor').classList.remove('hidden');
+                document.getElementById('controlPanel').classList.remove('hidden');
+                renderPreviews(d.previews);
+            });
+        }
+
+        function renderPreviews(previews){
+            const div=document.getElementById('profilePreviews');
+            div.innerHTML='';
+            for(let prof in previews){
+                const c=document.createElement('div');
+                c.className='profile-container';
+                const lbl=document.createElement('div');
+                lbl.className='profile-label';
+                lbl.textContent=prof;
+                const img=document.createElement('img');
+                img.src=previews[prof];
+                img.className='profile-preview clickable';
+                img.dataset.profile=prof;
+                img.addEventListener('click',()=>{
+                    document.querySelectorAll('.profile-preview.selected').forEach(e=>e.classList.remove('selected'));
+                    img.classList.add('selected');
+                    if(prof==='Manual') adjustImage();
+                    else applyProfile(prof);
+                });
+                c.append(lbl,img);
+                div.appendChild(c);
+            }
+        }
+
+        function applyProfile(profile){
+            fetch('/apply_profile',{
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({filename:currentFile,profile})
+            })
+            .then(r=>r.blob())
+            .then(b=>{
+                document.getElementById('processedImage').src=URL.createObjectURL(b);
+            });
+        }
+
+        document.getElementById('fileInput').addEventListener('change',e=>{
+            if(e.target.files[0])handleUpload(e.target.files[0]);
+        });
+        sliders.forEach(n=>{
+            document.getElementById(`${n}Slider`).addEventListener('input',adjustImage);
+        });
+        document.getElementById('dropZone').addEventListener('click',()=>document.getElementById('fileInput').click());
+        document.getElementById('dropZone').addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';});
+        document.getElementById('dropZone').addEventListener('drop',e=>{e.preventDefault();if(e.dataTransfer.files[0])handleUpload(e.dataTransfer.files[0]);});
+        function openModal(src){document.getElementById("imageModal").style.display="block";document.getElementById("modalImg").src=src;}
+        function closeModal(){document.getElementById("imageModal").style.display="none";}
+    </script>
+</body>
+</html>
